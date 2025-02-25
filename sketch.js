@@ -22,13 +22,44 @@ let noiseTime = 0;
 const MOUSE_INFLUENCE_RADIUS = 120;
 // 鼠标影响强度
 const MOUSE_INFLUENCE_STRENGTH = 8;
+// 扩散强度
+const DIFFUSION_STRENGTH = 0.05;
+// 粒子寿命范围
+const PARTICLE_LIFE_MIN = 100;
+const PARTICLE_LIFE_MAX = 300;
+// 边缘生成概率
+const EDGE_SPAWN_PROBABILITY = 0.7;
 
 // 粒子类
 class Particle {
   constructor() {
-    this.pos = createVector(random(width), random(height));
+    // 随机决定是从边缘生成还是随机位置生成
+    if (random() < EDGE_SPAWN_PROBABILITY) {
+      // 从边缘生成
+      let edge = floor(random(4)); // 0: 上, 1: 右, 2: 下, 3: 左
+      switch (edge) {
+        case 0: // 上边缘
+          this.pos = createVector(random(width), 0);
+          break;
+        case 1: // 右边缘
+          this.pos = createVector(width, random(height));
+          break;
+        case 2: // 下边缘
+          this.pos = createVector(random(width), height);
+          break;
+        case 3: // 左边缘
+          this.pos = createVector(0, random(height));
+          break;
+      }
+    } else {
+      // 随机位置生成
+      this.pos = createVector(random(width), random(height));
+    }
+    
     this.prevPos = this.pos.copy();
-    this.vel = createVector(0, 0);
+    // 给粒子一个初始随机速度
+    this.vel = p5.Vector.random2D();
+    this.vel.mult(random(0.5, 2));
     this.acc = createVector(0, 0);
     this.maxSpeed = random(1, 4);
     // 扩大色相范围，包括蓝色、紫色和粉色
@@ -41,15 +72,24 @@ class Particle {
     this.brightness = random(85, 100);
     this.alpha = random(10, 30);
     this.size = random(0.5, 2.5);
+    // 添加粒子寿命
+    this.life = random(PARTICLE_LIFE_MIN, PARTICLE_LIFE_MAX);
+    this.maxLife = this.life;
   }
 
   // 更新粒子位置
   update() {
+    // 添加一些随机扩散
+    this.applyDiffusion();
+    
     this.vel.add(this.acc);
     this.vel.limit(this.maxSpeed);
     this.prevPos = this.pos.copy();
     this.pos.add(this.vel);
     this.acc.mult(0);
+    
+    // 减少寿命
+    this.life--;
     
     // 边界处理
     if (this.pos.x > width) {
@@ -74,6 +114,13 @@ class Particle {
   applyForce(force) {
     this.acc.add(force);
   }
+  
+  // 应用扩散力
+  applyDiffusion() {
+    let diffusion = p5.Vector.random2D();
+    diffusion.mult(DIFFUSION_STRENGTH);
+    this.applyForce(diffusion);
+  }
 
   // 跟随流场
   follow(flowfield) {
@@ -84,13 +131,20 @@ class Particle {
     // 确保索引在有效范围内
     if (index >= 0 && index < flowfield.length) {
       let force = flowfield[index];
+      // 根据粒子位置添加一些变化
+      let angle = noise(this.pos.x * 0.01, this.pos.y * 0.01, noiseTime) * PI;
+      let variation = p5.Vector.fromAngle(angle);
+      variation.mult(0.3); // 变化强度
+      force.add(variation);
       this.applyForce(force);
     }
   }
 
   // 显示粒子
   show() {
-    stroke(this.hue, this.saturation, this.brightness, this.alpha);
+    // 根据寿命调整透明度
+    let alphaMultiplier = this.life / this.maxLife;
+    stroke(this.hue, this.saturation, this.brightness, this.alpha * alphaMultiplier);
     strokeWeight(this.size);
     line(this.prevPos.x, this.prevPos.y, this.pos.x, this.pos.y);
   }
@@ -105,6 +159,50 @@ class Particle {
       repelForce.mult(strength * (1 - distance / radius));
       this.applyForce(repelForce);
     }
+  }
+  
+  // 检查粒子是否死亡
+  isDead() {
+    return this.life <= 0;
+  }
+  
+  // 重置粒子
+  reset() {
+    // 随机决定是从边缘生成还是随机位置生成
+    if (random() < EDGE_SPAWN_PROBABILITY) {
+      // 从边缘生成
+      let edge = floor(random(4)); // 0: 上, 1: 右, 2: 下, 3: 左
+      switch (edge) {
+        case 0: // 上边缘
+          this.pos = createVector(random(width), 0);
+          break;
+        case 1: // 右边缘
+          this.pos = createVector(width, random(height));
+          break;
+        case 2: // 下边缘
+          this.pos = createVector(random(width), height);
+          break;
+        case 3: // 左边缘
+          this.pos = createVector(0, random(height));
+          break;
+      }
+    } else {
+      // 随机位置生成
+      this.pos = createVector(random(width), random(height));
+    }
+    
+    this.prevPos = this.pos.copy();
+    this.vel = p5.Vector.random2D();
+    this.vel.mult(random(0.5, 2));
+    this.acc = createVector(0, 0);
+    this.life = random(PARTICLE_LIFE_MIN, PARTICLE_LIFE_MAX);
+    this.maxLife = this.life;
+    // 随机更新颜色
+    this.hue = random([
+      random(180, 240), // 蓝色系
+      random(240, 290), // 紫色系
+      random(290, 330)  // 粉色系
+    ]);
   }
 }
 
@@ -136,9 +234,14 @@ function updateFlowField() {
     let xOffset = 0;
     for (let x = 0; x < cols; x++) {
       let index = x + y * cols;
+      // 使用多层噪声创建更复杂的流场
       let angle = noise(xOffset, yOffset, noiseTime) * TWO_PI * 2;
+      // 添加第二层噪声
+      angle += noise(xOffset * 2, yOffset * 2, noiseTime * 1.5) * PI;
       let v = p5.Vector.fromAngle(angle);
-      v.setMag(1);
+      // 根据位置变化力的大小
+      let magnitude = map(noise(xOffset * 0.5, yOffset * 0.5, noiseTime * 0.5), 0, 1, 0.5, 1.5);
+      v.setMag(magnitude);
       flowField[index] = v;
       xOffset += NOISE_SPACE_INCREMENT;
     }
@@ -163,11 +266,17 @@ function draw() {
   let mousePos = createVector(mouseX, mouseY);
   
   // 更新并显示所有粒子
-  for (let particle of particles) {
+  for (let i = particles.length - 1; i >= 0; i--) {
+    let particle = particles[i];
     particle.follow(flowField);
     particle.avoidMouse(mousePos, MOUSE_INFLUENCE_RADIUS, MOUSE_INFLUENCE_STRENGTH);
     particle.update();
     particle.show();
+    
+    // 检查粒子是否死亡，如果是则重置
+    if (particle.isDead()) {
+      particle.reset();
+    }
   }
 }
 
